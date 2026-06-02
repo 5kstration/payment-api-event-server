@@ -18,10 +18,10 @@ public class PaymentSimulationScheduler {
             var request = paymentSimulationService.generateOneAndSend();
 
             log.info(
-                    "결제 이벤트 전송 완료. externalPaymentEventId={}, userId={}, userCardId={}, amount={}",
+                    "결제 이벤트 전송 완료. externalPaymentEventId={}, userId={}, cardId={}, amount={}",
                     request.externalPaymentEventId(),
                     request.userId(),
-                    request.userCardId(),
+                    request.cardId(),
                     request.amount()
             );
         } catch (IllegalStateException e) {

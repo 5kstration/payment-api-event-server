@@ -72,7 +72,7 @@ public class PaymentSimulationService {
         return requests;
     }
 
-    public List<PaymentEventPostRequest> generateBulkByUserId(Long userId, int count) {
+    public List<PaymentEventPostRequest> generateBulkByUserId(String userId, int count) {
         if (userId == null) {
             throw new IllegalArgumentException("userId는 null일 수 없습니다.");
         }
@@ -91,7 +91,7 @@ public class PaymentSimulationService {
                 .toList();
     }
 
-    public List<PaymentEventPostRequest> generateBulkByUserIdAndSend(Long userId, int count) {
+    public List<PaymentEventPostRequest> generateBulkByUserIdAndSend(String userId, int count) {
         List<PaymentEventPostRequest> requests = generateBulkByUserId(userId, count);
 
         requests.forEach(mainProjectPaymentEventClient::sendPaymentEvent);
@@ -116,9 +116,10 @@ public class PaymentSimulationService {
         return new PaymentEventPostRequest(
                 UUID.randomUUID().toString(),
                 card.getUserId(),
-                card.getUserCardId(),
+                card.getCardId(),
+                card.getCardName(),
                 card.getCardCompany(),
-                card.getCardNumberLast4(),
+                card.getCardLast4(),
                 merchantName,
                 merchant.category(),
                 amount,

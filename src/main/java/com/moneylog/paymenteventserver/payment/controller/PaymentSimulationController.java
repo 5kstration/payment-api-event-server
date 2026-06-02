@@ -45,7 +45,7 @@ public class PaymentSimulationController {
     // 특정 userId 기준 결제 이벤트 여러 개 생성 후 메인 프로젝트로 전송
     @PostMapping("/users/{userId}/send/bulk")
     public List<PaymentEventPostRequest> generateBulkByUserIdAndSend(
-            @PathVariable Long userId,
+            @PathVariable String userId,
             @RequestParam(defaultValue = "10") int count
     ) {
         return paymentSimulationService.generateBulkByUserIdAndSend(userId, count);
