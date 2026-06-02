@@ -1,0 +1,29 @@
+{
+  "categories": [
+    {
+      "code": "FOOD",
+      "minAmount": 1000,
+      "maxAmount": 10000,
+      "roundUnit": 100,
+      "timeWindows": [
+        {
+          "startHour": 9,
+          "endHour": 18,
+          "weight": 1
+        }
+      ]
+    }
+  ],
+  "merchants": [
+    {
+      "name": "Test Store",
+      "category": "FOOD"
+    }
+  ],
+  "areas": [
+    "Test Area"
+  ],
+  "branchSuffixes": [
+    " Branch"
+  ]
+}

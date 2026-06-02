@@ -1,0 +1,20 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:payment-event-server-test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+
+simulation:
+  fixed-delay-ms: 60000
+  data-file: classpath:simulation/payment-simulation-data.json
+
+connector-service:
+  payment-event-url: http://localhost:18080/internal/v1/payment-events
