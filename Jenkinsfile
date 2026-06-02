@@ -71,18 +71,39 @@ pipeline {
             }
         }
 
+        stage('Debug Kubernetes Access') {
+            steps {
+                echo '[Debug] Check Jenkins agent, kubeconfig, and Kubernetes API reachability'
+                withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
+                    sh '''
+                        set +e
+                        echo "HOSTNAME=$(hostname)"
+                        echo "WHOAMI=$(whoami)"
+                        echo "KUBECONFIG_SHA=$(sha256sum ${KUBECONFIG} | cut -d ' ' -f 1)"
+                        echo "KUBE_SERVER=$(kubectl --kubeconfig=${KUBECONFIG} config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+                        kubectl --kubeconfig=${KUBECONFIG} config current-context
+                        kubectl --kubeconfig=${KUBECONFIG} version --request-timeout=10s
+                        curl -k --connect-timeout 10 https://10.2.0.21:6443/version
+                        nc -vz -w 10 10.2.0.21 6443
+                        ip route get 10.2.0.21
+                    '''
+                }
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 echo '[Deploy] Apply Kubernetes manifests and roll out Payment API Event Server'
                 withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
                     sh '''
                         set -e
-                        kubectl apply -f k8s/deployment.yaml
-                        kubectl apply -f k8s/istio.yaml
-                        kubectl set image deployment/${K8S_DEPLOYMENT} \
+                        kubectl --kubeconfig=${KUBECONFIG} version --request-timeout=10s
+                        kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/deployment.yaml
+                        kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/istio.yaml
+                        kubectl --kubeconfig=${KUBECONFIG} set image deployment/${K8S_DEPLOYMENT} \
                           ${K8S_DEPLOYMENT}=${IMAGE_FULL_NAME} \
                           -n ${K8S_NAMESPACE}
-                        kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                        kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/${K8S_DEPLOYMENT} \
                           -n ${K8S_NAMESPACE} \
                           --timeout=180s
                     '''
@@ -96,8 +117,8 @@ pipeline {
                 withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
                     sh '''
                         set -e
-                        kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
-                        kubectl get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
+                        kubectl --kubeconfig=${KUBECONFIG} get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                        kubectl --kubeconfig=${KUBECONFIG} get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
                     '''
                 }
             }
@@ -116,7 +137,17 @@ pipeline {
             echo '[Success] Payment API Event Server Kubernetes deployment completed'
         }
         failure {
-            echo '[Failure] Payment API Event Server pipeline failed'
+            echo '[Failure] Payment API Event Server pipeline failed. Fetching pod logs for debugging...'
+            withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
+                sh '''
+                    echo "=== Pod Status ==="
+                    kubectl --kubeconfig=${KUBECONFIG} get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} || true
+                    echo "=== Pod Describe ==="
+                    kubectl --kubeconfig=${KUBECONFIG} describe pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} || true
+                    echo "=== Application Logs ==="
+                    kubectl --kubeconfig=${KUBECONFIG} logs -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} --all-containers=true --tail=100 || true
+                '''
+            }
         }
     }
 }

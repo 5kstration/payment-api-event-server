@@ -5,11 +5,13 @@ FROM gradle:8.12-jdk17-alpine AS builder
 
 WORKDIR /build
 
-COPY build.gradle settings.gradle ./
-RUN gradle dependencies --no-daemon || true
+COPY gradlew build.gradle settings.gradle ./
+COPY gradle gradle
+RUN chmod +x ./gradlew \
+    && ./gradlew dependencies --no-daemon || true
 
 COPY src src
-RUN gradle bootJar -x test --no-daemon
+RUN ./gradlew bootJar -x test --no-daemon
 
 # =========================================================================
 # Stage 2: Runtime Stage
