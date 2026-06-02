@@ -137,7 +137,17 @@ pipeline {
             echo '[Success] Payment API Event Server Kubernetes deployment completed'
         }
         failure {
-            echo '[Failure] Payment API Event Server pipeline failed'
+            echo '[Failure] Payment API Event Server pipeline failed. Fetching pod logs for debugging...'
+            withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
+                sh '''
+                    echo "=== Pod Status ==="
+                    kubectl --kubeconfig=${KUBECONFIG} get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} || true
+                    echo "=== Pod Describe ==="
+                    kubectl --kubeconfig=${KUBECONFIG} describe pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} || true
+                    echo "=== Application Logs ==="
+                    kubectl --kubeconfig=${KUBECONFIG} logs -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT} --all-containers=true --tail=100 || true
+                '''
+            }
         }
     }
 }
