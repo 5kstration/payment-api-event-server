@@ -86,6 +86,7 @@ build/
 out/
 target/
 *.jar
+!gradle/wrapper/gradle-wrapper.jar
 *.war
 
 # Node.js
