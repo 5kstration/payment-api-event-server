@@ -77,12 +77,13 @@ pipeline {
                 withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
                     sh '''
                         set -e
-                        kubectl apply -f k8s/deployment.yaml
-                        kubectl apply -f k8s/istio.yaml
-                        kubectl set image deployment/${K8S_DEPLOYMENT} \
+                        kubectl --kubeconfig=${KUBECONFIG} version --request-timeout=10s
+                        kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/deployment.yaml
+                        kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/istio.yaml
+                        kubectl --kubeconfig=${KUBECONFIG} set image deployment/${K8S_DEPLOYMENT} \
                           ${K8S_DEPLOYMENT}=${IMAGE_FULL_NAME} \
                           -n ${K8S_NAMESPACE}
-                        kubectl rollout status deployment/${K8S_DEPLOYMENT} \
+                        kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/${K8S_DEPLOYMENT} \
                           -n ${K8S_NAMESPACE} \
                           --timeout=180s
                     '''
@@ -96,8 +97,8 @@ pipeline {
                 withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
                     sh '''
                         set -e
-                        kubectl get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
-                        kubectl get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
+                        kubectl --kubeconfig=${KUBECONFIG} get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                        kubectl --kubeconfig=${KUBECONFIG} get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
                     '''
                 }
             }
