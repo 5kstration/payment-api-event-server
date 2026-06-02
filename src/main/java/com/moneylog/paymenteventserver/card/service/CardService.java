@@ -4,6 +4,7 @@ import com.moneylog.paymenteventserver.card.dto.CardResponse;
 import com.moneylog.paymenteventserver.card.dto.RegisterCardRequest;
 import com.moneylog.paymenteventserver.card.entity.Card;
 import com.moneylog.paymenteventserver.card.repository.CardRepository;
+import com.moneylog.paymenteventserver.global.error.CardOwnershipMismatchException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,37 +19,58 @@ public class CardService {
 
     private final CardRepository cardRepository;
 
-     /*
-    Main 프로젝트가 제공하는 카드 데이터를 등록 Register method
-    이미 등록된 카드 => 기존 카드를 반환
-    등록되지 않은 카드 => 새로 저장 후 반환
-      */
     @Transactional
     public CardResponse registerCard(RegisterCardRequest request) {
-        return cardRepository
-                .findByUserIdAndUserCardId(request.userId(), request.userCardId())
-                .map(CardResponse::from)
-                .orElseGet(() -> {
-                    Card card = Card.builder()
-                            .userId(request.userId())
-                            .userCardId(request.userCardId())
-                            .cardCompany(request.cardCompany())
-                            .cardNumberLast4(request.cardNumberLast4())
-                            .active(true)
-                            .registeredAt(LocalDateTime.now())
-                            .build();
-
-                    Card savedCard = cardRepository.save(card);
-
-                    return CardResponse.from(savedCard);
-                });
+        return cardRepository.findById(request.cardId())
+                .map(card -> syncExistingCard(card, request))
+                .orElseGet(() -> cardRepository.findByUserId(request.userId())
+                        .map(existingCard -> replaceUserCard(existingCard, request))
+                        .orElseGet(() -> createCard(request)));
     }
-
 
     public List<CardResponse> getCards() {
         return cardRepository.findAll()
                 .stream()
                 .map(CardResponse::from)
                 .toList();
+    }
+
+    private CardResponse syncExistingCard(Card card, RegisterCardRequest request) {
+        if (!card.getUserId().equals(request.userId())) {
+            throw new CardOwnershipMismatchException(
+                    card.getCardId(),
+                    card.getUserId(),
+                    request.userId()
+            );
+        }
+
+        card.syncFromOnboarding(
+                request.cardName(),
+                request.cardCompany(),
+                request.cardLast4()
+        );
+        return CardResponse.from(card);
+    }
+
+    private CardResponse replaceUserCard(Card existingCard, RegisterCardRequest request) {
+        cardRepository.delete(existingCard);
+        cardRepository.flush();
+        return createCard(request);
+    }
+
+    private CardResponse createCard(RegisterCardRequest request) {
+        Card card = Card.builder()
+                .cardId(request.cardId())
+                .userId(request.userId())
+                .cardName(request.cardName())
+                .cardCompany(request.cardCompany())
+                .cardLast4(request.cardLast4())
+                .active(true)
+                .registeredAt(LocalDateTime.now())
+                .build();
+
+        Card savedCard = cardRepository.save(card);
+
+        return CardResponse.from(savedCard);
     }
 }
