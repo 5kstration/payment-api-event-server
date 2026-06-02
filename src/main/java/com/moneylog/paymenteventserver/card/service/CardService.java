@@ -4,6 +4,7 @@ import com.moneylog.paymenteventserver.card.dto.CardResponse;
 import com.moneylog.paymenteventserver.card.dto.RegisterCardRequest;
 import com.moneylog.paymenteventserver.card.entity.Card;
 import com.moneylog.paymenteventserver.card.repository.CardRepository;
+import com.moneylog.paymenteventserver.global.error.CardOwnershipMismatchException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -35,6 +36,14 @@ public class CardService {
     }
 
     private CardResponse syncExistingCard(Card card, RegisterCardRequest request) {
+        if (!card.getUserId().equals(request.userId())) {
+            throw new CardOwnershipMismatchException(
+                    card.getCardId(),
+                    card.getUserId(),
+                    request.userId()
+            );
+        }
+
         card.syncFromOnboarding(
                 request.cardName(),
                 request.cardCompany(),
