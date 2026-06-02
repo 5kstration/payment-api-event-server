@@ -71,6 +71,26 @@ pipeline {
             }
         }
 
+        stage('Debug Kubernetes Access') {
+            steps {
+                echo '[Debug] Check Jenkins agent, kubeconfig, and Kubernetes API reachability'
+                withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
+                    sh '''
+                        set +e
+                        echo "HOSTNAME=$(hostname)"
+                        echo "WHOAMI=$(whoami)"
+                        echo "KUBECONFIG_SHA=$(sha256sum ${KUBECONFIG} | cut -d ' ' -f 1)"
+                        echo "KUBE_SERVER=$(kubectl --kubeconfig=${KUBECONFIG} config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
+                        kubectl --kubeconfig=${KUBECONFIG} config current-context
+                        kubectl --kubeconfig=${KUBECONFIG} version --request-timeout=10s
+                        curl -k --connect-timeout 10 https://10.2.0.21:6443/version
+                        nc -vz -w 10 10.2.0.21 6443
+                        ip route get 10.2.0.21
+                    '''
+                }
+            }
+        }
+
         stage('Deploy to Kubernetes') {
             steps {
                 echo '[Deploy] Apply Kubernetes manifests and roll out Payment API Event Server'
