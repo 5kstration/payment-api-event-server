@@ -2,9 +2,10 @@ plugins {
     id 'java'
     id 'org.springframework.boot' version '3.5.14'
     id 'io.spring.dependency-management' version '1.1.7'
+    id 'org.sonarqube' version '6.0.1.5171'
 }
 
-group = 'com.moneylog'
+group = 'com.project.backend'
 version = '0.0.1-SNAPSHOT'
 description = 'payment-event-server'
 
@@ -31,6 +32,11 @@ dependencies {
 
     implementation 'io.micrometer:micrometer-registry-prometheus'       // prometheus 의존성
 
+
+    // OpenAPI Swagger
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.5'
+
+
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testCompileOnly 'org.projectlombok:lombok'
@@ -42,3 +48,17 @@ dependencies {
 tasks.named('test') {
     useJUnitPlatform()
 }
+sonarqube {
+    properties {
+        property "sonar.projectKey", "payment-api-event-server"
+        property "sonar.projectName", "payment-api-event-server"
+        property "sonar.sourceEncoding", "UTF-8"
+        if (System.getenv("SONAR_HOST_URL")) {
+            property "sonar.host.url", System.getenv("SONAR_HOST_URL")
+        }
+        if (System.getenv("SONAR_AUTH_TOKEN")) {
+            property "sonar.token", System.getenv("SONAR_AUTH_TOKEN")
+        }
+    }
+}
+
