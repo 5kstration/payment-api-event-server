@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class PaymentSimulationScheduler {
+
     private final PaymentSimulationService paymentSimulationService;
 
     @Scheduled(fixedDelayString = "${simulation.fixed-delay-ms}")
@@ -18,16 +19,16 @@ public class PaymentSimulationScheduler {
             var request = paymentSimulationService.generateOneAndSend();
 
             log.info(
-                    "결제 이벤트 전송 완료. externalPaymentEventId={}, userId={}, cardId={}, amount={}",
+                    "Payment event generated. It is sent to budget only when budget sync is enabled. externalPaymentEventId={}, userId={}, cardId={}, amount={}",
                     request.externalPaymentEventId(),
                     request.userId(),
                     request.cardId(),
                     request.amount()
             );
         } catch (IllegalStateException e) {
-            log.warn("결제 이벤트 생성/전송 스킵. reason={}", e.getMessage());
+            log.warn("Payment event generation skipped. reason={}", e.getMessage());
         } catch (Exception e) {
-            log.error("결제 이벤트 생성/전송 실패", e);
+            log.error("Payment event generation failed", e);
         }
     }
 }

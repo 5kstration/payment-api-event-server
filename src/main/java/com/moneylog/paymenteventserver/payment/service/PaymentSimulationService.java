@@ -1,22 +1,25 @@
 package com.moneylog.paymenteventserver.payment.service;
 
-
 import com.moneylog.paymenteventserver.card.entity.Card;
 import com.moneylog.paymenteventserver.card.repository.CardRepository;
 import com.moneylog.paymenteventserver.payment.client.MainProjectPaymentEventClient;
 import com.moneylog.paymenteventserver.payment.dto.PaymentEventPostRequest;
+import com.moneylog.paymenteventserver.payment.entity.PaymentEvent;
 import com.moneylog.paymenteventserver.payment.generator.PaymentSimulationData;
 import com.moneylog.paymenteventserver.payment.generator.PaymentSimulationDataLoader;
+import com.moneylog.paymenteventserver.payment.repository.PaymentEventRepository;
+import com.moneylog.paymenteventserver.payment.repository.UserPaymentStateRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
@@ -26,105 +29,129 @@ public class PaymentSimulationService {
     private static final int MAX_DAYS_BACK = 30;
 
     private final CardRepository cardRepository;
+    private final PaymentEventRepository paymentEventRepository;
+    private final UserPaymentStateRepository userPaymentStateRepository;
     private final PaymentSimulationDataLoader dataLoader;
     private final MainProjectPaymentEventClient mainProjectPaymentEventClient;
 
+    @Transactional
     public PaymentEventPostRequest generateOne() {
-        List<Card> cards = cardRepository.findByActiveTrue();
-
-        if (cards.isEmpty()) {
-            throw new IllegalStateException("등록된 활성 카드가 없습니다.");
-        }
-
-        Card card = pickOne(cards);
-
-        return createPaymentEvent(card);
+        Card card = pickRegisteredCard();
+        PaymentEvent event = createAndSavePaymentEvent(card);
+        return event.toPostRequest();
     }
 
+    @Transactional
     public PaymentEventPostRequest generateOneAndSend() {
-        PaymentEventPostRequest request = generateOne();
-
-        mainProjectPaymentEventClient.sendPaymentEvent(request);
-
-        return request;
+        Card card = pickRegisteredCard();
+        PaymentEvent event = createAndSavePaymentEvent(card);
+        sendToBudgetIfEnabled(event);
+        return event.toPostRequest();
     }
 
+    @Transactional
     public List<PaymentEventPostRequest> generateBulk(int count) {
         validateCount(count);
-
-        List<Card> cards = cardRepository.findByActiveTrue();
-
-        if (cards.isEmpty()) {
-            throw new IllegalStateException("등록된 활성 카드가 없습니다.");
-        }
+        List<Card> cards = getRegisteredCards();
 
         return ThreadLocalRandom.current()
                 .ints(count, 0, cards.size())
-                .mapToObj(index -> createPaymentEvent(cards.get(index)))
+                .mapToObj(index -> createAndSavePaymentEvent(cards.get(index)).toPostRequest())
                 .toList();
     }
 
+    @Transactional
     public List<PaymentEventPostRequest> generateBulkAndSend(int count) {
-        List<PaymentEventPostRequest> requests = generateBulk(count);
-
-        requests.forEach(mainProjectPaymentEventClient::sendPaymentEvent);
-
-        return requests;
-    }
-
-    public List<PaymentEventPostRequest> generateBulkByUserId(String userId, int count) {
-        if (userId == null) {
-            throw new IllegalArgumentException("userId는 null일 수 없습니다.");
-        }
-
         validateCount(count);
-
-        List<Card> cards = cardRepository.findByUserIdAndActiveTrue(userId);
-
-        if (cards.isEmpty()) {
-            throw new IllegalStateException("해당 userId에 등록된 활성 카드가 없습니다. userId=" + userId);
-        }
+        List<Card> cards = getRegisteredCards();
 
         return ThreadLocalRandom.current()
                 .ints(count, 0, cards.size())
-                .mapToObj(index -> createPaymentEvent(cards.get(index)))
+                .mapToObj(index -> {
+                    PaymentEvent event = createAndSavePaymentEvent(cards.get(index));
+                    sendToBudgetIfEnabled(event);
+                    return event.toPostRequest();
+                })
                 .toList();
     }
 
-    public List<PaymentEventPostRequest> generateBulkByUserIdAndSend(String userId, int count) {
-        List<PaymentEventPostRequest> requests = generateBulkByUserId(userId, count);
+    @Transactional
+    public List<PaymentEventPostRequest> generateBulkByUserId(String userId, int count) {
+        validateUserId(userId);
+        validateCount(count);
+        Card card = getRegisteredCardByUserId(userId);
 
-        requests.forEach(mainProjectPaymentEventClient::sendPaymentEvent);
-
-        return requests;
+        return ThreadLocalRandom.current()
+                .ints(count, 0, 1)
+                .mapToObj(index -> createAndSavePaymentEvent(card).toPostRequest())
+                .toList();
     }
 
-    private PaymentEventPostRequest createPaymentEvent(Card card) {
+    @Transactional
+    public List<PaymentEventPostRequest> generateBulkByUserIdAndSend(String userId, int count) {
+        validateUserId(userId);
+        validateCount(count);
+        Card card = getRegisteredCardByUserId(userId);
+
+        return ThreadLocalRandom.current()
+                .ints(count, 0, 1)
+                .mapToObj(index -> {
+                    PaymentEvent event = createAndSavePaymentEvent(card);
+                    sendToBudgetIfEnabled(event);
+                    return event.toPostRequest();
+                })
+                .toList();
+    }
+
+    private Card pickRegisteredCard() {
+        List<Card> cards = getRegisteredCards();
+        return pickOne(cards);
+    }
+
+    private List<Card> getRegisteredCards() {
+        List<Card> cards = cardRepository.findAll();
+        if (cards.isEmpty()) {
+            throw new IllegalStateException("No registered cards are available.");
+        }
+        return cards;
+    }
+
+    private Card getRegisteredCardByUserId(String userId) {
+        return cardRepository.findByUserId(userId)
+                .orElseThrow(() -> new IllegalStateException("No registered card is available. userId=" + userId));
+    }
+
+    private PaymentEvent createAndSavePaymentEvent(Card card) {
         PaymentSimulationData data = dataLoader.getData();
-
         PaymentSimulationData.MerchantBrand merchant = pickOne(data.merchants());
+        PaymentSimulationData.CategoryRule categoryRule = findCategoryRule(data, merchant.category());
 
-        PaymentSimulationData.CategoryRule categoryRule = findCategoryRule(
-                data,
-                merchant.category()
-        );
-
-        Long amount = generateAmount(categoryRule);
-        LocalDateTime paidAt = generatePaidAt(categoryRule);
-        String merchantName = generateMerchantName(merchant, data);
-
-        return new PaymentEventPostRequest(
-                UUID.randomUUID().toString(),
-                card.getUserId(),
-                card.getCardId(),
-                card.getCardName(),
-                card.getCardCompany(),
-                card.getCardLast4(),
-                merchantName,
+        PaymentEvent event = PaymentEvent.create(
+                card,
+                generateMerchantName(merchant, data),
                 merchant.category(),
-                amount,
-                paidAt
+                generateAmount(categoryRule),
+                generatePaidAt(categoryRule)
         );
+        return paymentEventRepository.save(event);
+    }
+
+    private void sendToBudgetIfEnabled(PaymentEvent event) {
+        if (!userPaymentStateRepository.existsByUserIdAndBudgetSyncEnabledTrue(event.getUserId())) {
+            return;
+        }
+
+        try {
+            mainProjectPaymentEventClient.sendPaymentEvent(event.toPostRequest());
+            event.markSentToBudget(LocalDateTime.now());
+        } catch (RuntimeException e) {
+            log.warn(
+                    "Failed to send generated payment event to budget. userId={}, externalPaymentEventId={}",
+                    event.getUserId(),
+                    event.getExternalPaymentEventId(),
+                    e
+            );
+        }
     }
 
     private PaymentSimulationData.CategoryRule findCategoryRule(
@@ -136,7 +163,7 @@ public class PaymentSimulationService {
                 .filter(category -> category.code().equals(categoryCode))
                 .findFirst()
                 .orElseThrow(() -> new IllegalStateException(
-                        "category rule을 찾을 수 없습니다. category=" + categoryCode
+                        "Category rule is not configured. category=" + categoryCode
                 ));
     }
 
@@ -152,26 +179,21 @@ public class PaymentSimulationService {
 
         if (maxUnit < minUnit) {
             throw new IllegalStateException(
-                    "금액 생성 범위가 올바르지 않습니다. category=" + categoryRule.code()
+                    "Invalid amount generation range. category=" + categoryRule.code()
             );
         }
 
         long selectedUnit = random.nextLong(minUnit, maxUnit + 1);
-
         return selectedUnit * roundUnit;
     }
 
     private LocalDateTime generatePaidAt(PaymentSimulationData.CategoryRule categoryRule) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
-
-        PaymentSimulationData.TimeWindow timeWindow = pickWeightedTimeWindow(
-                categoryRule.timeWindows()
-        );
+        PaymentSimulationData.TimeWindow timeWindow = pickWeightedTimeWindow(categoryRule.timeWindows());
 
         int hour = random.nextInt(timeWindow.startHour(), timeWindow.endHour());
         int minute = random.nextInt(0, 60);
         int second = random.nextInt(0, 60);
-
         int daysBack = random.nextInt(0, MAX_DAYS_BACK + 1);
 
         return LocalDate.now()
@@ -205,7 +227,6 @@ public class PaymentSimulationService {
     ) {
         String area = pickOne(data.areas());
         String branchSuffix = pickOne(data.branchSuffixes());
-
         return merchant.name() + " " + area + branchSuffix;
     }
 
@@ -214,15 +235,19 @@ public class PaymentSimulationService {
         return values.get(index);
     }
 
+    private void validateUserId(String userId) {
+        if (userId == null || userId.isBlank()) {
+            throw new IllegalArgumentException("userId must not be blank.");
+        }
+    }
+
     private void validateCount(int count) {
         if (count <= 0) {
-            throw new IllegalArgumentException("생성 개수는 1개 이상이어야 합니다.");
+            throw new IllegalArgumentException("count must be greater than or equal to 1.");
         }
 
         if (count > MAX_BULK_COUNT) {
-            throw new IllegalArgumentException(
-                    "한 번에 생성할 수 있는 최대 개수는 " + MAX_BULK_COUNT + "개입니다."
-            );
+            throw new IllegalArgumentException("count must be less than or equal to " + MAX_BULK_COUNT + ".");
         }
     }
 }
