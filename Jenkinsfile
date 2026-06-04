@@ -10,14 +10,12 @@ pipeline {
     }
 
     environment {
-        // GitLab Container Registry
         REGISTRY_URL     = 'registry.gitlab.com'
         IMAGE_NAME       = '5kstration/payment-api-event-server'
         IMAGE_TAG        = "${BUILD_NUMBER}"
         IMAGE_FULL_NAME  = "${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
         IMAGE_LATEST     = "${REGISTRY_URL}/${IMAGE_NAME}:latest"
 
-        // Jenkins credentials
         REGISTRY_CRED_ID = 'gitlab-registry-credentials'
         KUBECONFIG_ID    = 'k8s-kubeconfig'
         K8S_NAMESPACE    = 'service'
@@ -46,6 +44,20 @@ pipeline {
             }
         }
 
+        stage('SonarQube Analysis') {
+            steps {
+                echo '[SonarQube] Run static code analysis'
+                catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
+                    withSonarQubeEnv('SonarQube-Server') {
+                        sh './gradlew sonar'
+                    }
+                    timeout(time: 5, unit: 'MINUTES') {
+                        waitForQualityGate abortPipeline: true
+                    }
+                }
+            }
+        }
+
         stage('Docker Login') {
             steps {
                 echo '[Docker] Login to container registry'
@@ -71,26 +83,6 @@ pipeline {
             }
         }
 
-        stage('Debug Kubernetes Access') {
-            steps {
-                echo '[Debug] Check Jenkins agent, kubeconfig, and Kubernetes API reachability'
-                withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
-                    sh '''
-                        set +e
-                        echo "HOSTNAME=$(hostname)"
-                        echo "WHOAMI=$(whoami)"
-                        echo "KUBECONFIG_SHA=$(sha256sum ${KUBECONFIG} | cut -d ' ' -f 1)"
-                        echo "KUBE_SERVER=$(kubectl --kubeconfig=${KUBECONFIG} config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
-                        kubectl --kubeconfig=${KUBECONFIG} config current-context
-                        kubectl --kubeconfig=${KUBECONFIG} version --request-timeout=10s
-                        curl -k --connect-timeout 10 https://10.2.0.21:6443/version
-                        nc -vz -w 10 10.2.0.21 6443
-                        ip route get 10.2.0.21
-                    '''
-                }
-            }
-        }
-
         stage('Deploy to Kubernetes') {
             steps {
                 echo '[Deploy] Apply Kubernetes manifests and roll out Payment API Event Server'
@@ -99,6 +91,7 @@ pipeline {
                         set -e
                         kubectl --kubeconfig=${KUBECONFIG} version --request-timeout=10s
                         kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/deployment.yaml
+                        kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/service.yaml
                         kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/istio.yaml
                         kubectl --kubeconfig=${KUBECONFIG} set image deployment/${K8S_DEPLOYMENT} \
                           ${K8S_DEPLOYMENT}=${IMAGE_FULL_NAME} \
