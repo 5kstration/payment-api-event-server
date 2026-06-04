@@ -24,6 +24,9 @@ logs/
 .env.*
 !.env.example
 
+### Kubernetes environment-specific config ###
+k8s/configmap.yaml
+
 ### IDE / OS ###
 .idea/
 *.iml

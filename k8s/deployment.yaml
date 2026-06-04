@@ -27,13 +27,10 @@ spec:
               mountPath: /app/config/payment-simulation-data.json
               subPath: payment-simulation-data.json
               readOnly: true
+          envFrom:
+            - configMapRef:
+                name: payment-api-event-server-config
           env:
-            - name: SPRING_APPLICATION_NAME
-              value: payment-api-event-server
-            - name: SERVER_PORT
-              value: "8080"
-            - name: SPRING_DATASOURCE_URL
-              value: jdbc:postgresql://10.2.0.23:5432,10.0.2.64:5432/payment_event_server?targetServerType=primary
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -44,24 +41,6 @@ spec:
                 secretKeyRef:
                   name: postgres-db-secret
                   key: DB_PASSWORD
-            - name: SPRING_DATASOURCE_DRIVER_CLASS_NAME
-              value: org.postgresql.Driver
-            - name: SPRING_JPA_HIBERNATE_DDL_AUTO
-              value: update
-            - name: SPRING_JPA_OPEN_IN_VIEW
-              value: "false"
-            - name: SIMULATION_FIXED_DELAY_MS
-              value: "60000"
-            - name: SIMULATION_DATA_FILE
-              value: file:/app/config/payment-simulation-data.json
-            - name: CONNECTOR_SERVICE_PAYMENT_EVENT_URL
-              value: http://api-connector.service.svc.cluster.local:8081/internal/v1/payment-events
-            - name: MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
-              value: health,info,prometheus
-            - name: MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS
-              value: always
-            - name: LOGGING_LEVEL_COM_MONEYLOG_PAYMENTEVENTSERVER
-              value: INFO
           readinessProbe:
             httpGet:
               path: /actuator/health
@@ -91,19 +70,3 @@ spec:
         - name: payment-simulation-data
           secret:
             secretName: payment-api-event-server-simulation-secret
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: payment-api-event-server
-  namespace: service
-  labels:
-    app: payment-api-event-server
-spec:
-  type: ClusterIP
-  selector:
-    app: payment-api-event-server
-  ports:
-    - name: http
-      port: 8080
-      targetPort: http

@@ -1,11 +1,11 @@
 apiVersion: networking.istio.io/v1beta1
 kind: Gateway
 metadata:
-  name: payment-api-event-server-gateway
+  name: onprem-gateway
   namespace: service
 spec:
   selector:
-    istio: ingressgateway
+    istio: ingress
   servers:
     - port:
         number: 80
@@ -13,6 +13,7 @@ spec:
         protocol: HTTP
       hosts:
         - "*"
+
 ---
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
@@ -23,11 +24,23 @@ spec:
   hosts:
     - "*"
   gateways:
-    - payment-api-event-server-gateway
+    - onprem-gateway
   http:
-    - match:
+    - name: payment-api-event-server-root
+      match:
         - uri:
-            prefix: /payment-api-event-server
+            exact: /payment-api-event-server
+      rewrite:
+        uri: /
+      route:
+        - destination:
+            host: payment-api-event-server.service.svc.cluster.local
+            port:
+              number: 8080
+    - name: payment-api-event-server-prefix
+      match:
+        - uri:
+            prefix: /payment-api-event-server/
       rewrite:
         uri: /
       route:
