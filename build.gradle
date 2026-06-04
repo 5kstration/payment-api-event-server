@@ -5,7 +5,7 @@ plugins {
     id 'org.sonarqube' version '6.0.1.5171'
 }
 
-group = 'com.moneylog'
+group = 'com.project.backend'
 version = '0.0.1-SNAPSHOT'
 description = 'payment-event-server'
 
