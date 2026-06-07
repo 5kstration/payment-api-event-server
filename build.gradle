@@ -33,6 +33,8 @@ dependencies {
     implementation 'io.micrometer:micrometer-registry-prometheus'       // prometheus 의존성
 
 
+    implementation 'io.nats:jnats:2.25.2'                               // NATS JetStream 의존성
+
     // OpenAPI Swagger
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.5'
 
