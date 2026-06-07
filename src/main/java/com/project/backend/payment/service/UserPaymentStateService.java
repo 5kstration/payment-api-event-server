@@ -1,7 +1,6 @@
 package com.project.backend.payment.service;
 
 import com.project.backend.card.repository.CardRepository;
-import com.project.backend.payment.client.MainProjectPaymentEventClient;
 import com.project.backend.payment.entity.PaymentEvent;
 import com.project.backend.payment.entity.UserPaymentState;
 import com.project.backend.payment.repository.PaymentEventRepository;
@@ -23,7 +22,7 @@ public class UserPaymentStateService {
     private final CardRepository cardRepository;
     private final UserPaymentStateRepository userPaymentStateRepository;
     private final PaymentEventRepository paymentEventRepository;
-    private final MainProjectPaymentEventClient mainProjectPaymentEventClient;
+    private final PaymentEventDeliveryService paymentEventDeliveryService;
 
     @Transactional
     public void activateBudgetSync(String userId) {
@@ -62,8 +61,7 @@ public class UserPaymentStateService {
 
         for (PaymentEvent event : pendingEvents) {
             try {
-                mainProjectPaymentEventClient.sendPaymentEvent(event.toPostRequest());
-                event.markSentToBudget(LocalDateTime.now());
+                paymentEventDeliveryService.dispatch(event);
             } catch (RuntimeException e) {
                 log.warn(
                         "Failed to send pending payment event to budget. userId={}, externalPaymentEventId={}",

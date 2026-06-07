@@ -2,7 +2,6 @@ package com.project.backend.payment.service;
 
 import com.project.backend.card.entity.Card;
 import com.project.backend.card.repository.CardRepository;
-import com.project.backend.payment.client.MainProjectPaymentEventClient;
 import com.project.backend.payment.dto.PaymentEventPostRequest;
 import com.project.backend.payment.entity.PaymentEvent;
 import com.project.backend.payment.generator.PaymentSimulationData;
@@ -16,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -27,12 +27,14 @@ public class PaymentSimulationService {
 
     private static final int MAX_BULK_COUNT = 1000;
     private static final int MAX_DAYS_BACK = 30;
+    private static final int FIRST_PAYMENT_HOUR = 6;
+    private static final int LAST_PAYMENT_EXCLUSIVE_HOUR = 24;
 
     private final CardRepository cardRepository;
     private final PaymentEventRepository paymentEventRepository;
     private final UserPaymentStateRepository userPaymentStateRepository;
     private final PaymentSimulationDataLoader dataLoader;
-    private final MainProjectPaymentEventClient mainProjectPaymentEventClient;
+    private final PaymentEventDeliveryService paymentEventDeliveryService;
 
     @Transactional
     public PaymentEventPostRequest generateOne() {
@@ -142,8 +144,7 @@ public class PaymentSimulationService {
         }
 
         try {
-            mainProjectPaymentEventClient.sendPaymentEvent(event.toPostRequest());
-            event.markSentToBudget(LocalDateTime.now());
+            paymentEventDeliveryService.dispatch(event);
         } catch (RuntimeException e) {
             log.warn(
                     "Failed to send generated payment event to budget. userId={}, externalPaymentEventId={}",
@@ -189,7 +190,7 @@ public class PaymentSimulationService {
 
     private LocalDateTime generatePaidAt(PaymentSimulationData.CategoryRule categoryRule) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        PaymentSimulationData.TimeWindow timeWindow = pickWeightedTimeWindow(categoryRule.timeWindows());
+        PaymentSimulationData.TimeWindow timeWindow = pickWeightedTimeWindow(getAwakeTimeWindows(categoryRule));
 
         int hour = random.nextInt(timeWindow.startHour(), timeWindow.endHour());
         int minute = random.nextInt(0, 60);
@@ -199,6 +200,33 @@ public class PaymentSimulationService {
         return LocalDate.now()
                 .minusDays(daysBack)
                 .atTime(hour, minute, second);
+    }
+
+    private List<PaymentSimulationData.TimeWindow> getAwakeTimeWindows(
+            PaymentSimulationData.CategoryRule categoryRule
+    ) {
+        List<PaymentSimulationData.TimeWindow> awakeTimeWindows = new ArrayList<>();
+
+        for (PaymentSimulationData.TimeWindow timeWindow : categoryRule.timeWindows()) {
+            int startHour = Math.max(timeWindow.startHour(), FIRST_PAYMENT_HOUR);
+            int endHour = Math.min(timeWindow.endHour(), LAST_PAYMENT_EXCLUSIVE_HOUR);
+
+            if (startHour < endHour) {
+                awakeTimeWindows.add(new PaymentSimulationData.TimeWindow(
+                        startHour,
+                        endHour,
+                        timeWindow.weight()
+                ));
+            }
+        }
+
+        if (awakeTimeWindows.isEmpty()) {
+            throw new IllegalStateException(
+                    "No awake payment time windows are configured. category=" + categoryRule.code()
+            );
+        }
+
+        return awakeTimeWindows;
     }
 
     private PaymentSimulationData.TimeWindow pickWeightedTimeWindow(
