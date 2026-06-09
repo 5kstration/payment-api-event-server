@@ -4,6 +4,8 @@ import com.project.backend.card.entity.Card;
 import com.project.backend.payment.dto.PaymentEventPostRequest;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
@@ -66,6 +68,10 @@ public class PaymentEvent {
     @Column(name = "paid_at", nullable = false)
     private LocalDateTime paidAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "generation_type", nullable = false, length = 20)
+    private PaymentEventGenerationType generationType;
+
     @Column(name = "sent_to_budget", nullable = false)
     private boolean sentToBudget;
 
@@ -80,7 +86,8 @@ public class PaymentEvent {
             String merchantName,
             String category,
             Long amount,
-            LocalDateTime paidAt
+            LocalDateTime paidAt,
+            PaymentEventGenerationType generationType
     ) {
         return PaymentEvent.builder()
                 .paymentEventId(UUID.randomUUID().toString())
@@ -94,6 +101,7 @@ public class PaymentEvent {
                 .category(category)
                 .amount(amount)
                 .paidAt(paidAt)
+                .generationType(generationType)
                 .sentToBudget(false)
                 .createdAt(LocalDateTime.now())
                 .build();
