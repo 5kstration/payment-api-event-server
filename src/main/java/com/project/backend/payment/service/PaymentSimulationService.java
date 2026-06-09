@@ -125,7 +125,7 @@ public class PaymentSimulationService {
                 .ints(count, 0, 1)
                 .mapToObj(index -> {
                     PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.BACKFILL);
-                    sendToBudgetIfEnabled(event);
+                    dispatchToBudgetStrict(event);
                     return event.toPostRequest();
                 })
                 .toList();
@@ -183,6 +183,16 @@ public class PaymentSimulationService {
                     e
             );
         }
+    }
+
+    private void dispatchToBudgetStrict(PaymentEvent event) {
+        if (!userPaymentStateRepository.existsByUserIdAndBudgetSyncEnabledTrue(event.getUserId())) {
+            throw new IllegalStateException(
+                    "Budget sync is not enabled for backfill. userId=" + event.getUserId()
+            );
+        }
+
+        paymentEventDeliveryService.dispatch(event);
     }
 
     private PaymentSimulationData.CategoryRule findCategoryRule(
