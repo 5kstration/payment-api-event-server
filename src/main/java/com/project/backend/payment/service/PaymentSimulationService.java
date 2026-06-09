@@ -4,6 +4,8 @@ import com.project.backend.card.entity.Card;
 import com.project.backend.card.repository.CardRepository;
 import com.project.backend.payment.dto.PaymentEventPostRequest;
 import com.project.backend.payment.entity.PaymentEvent;
+import com.project.backend.payment.entity.PaymentEventGenerationType;
+import com.project.backend.payment.entity.UserPaymentState;
 import com.project.backend.payment.generator.PaymentSimulationData;
 import com.project.backend.payment.generator.PaymentSimulationDataLoader;
 import com.project.backend.payment.repository.PaymentEventRepository;
@@ -25,6 +27,8 @@ import java.util.concurrent.ThreadLocalRandom;
 @Transactional(readOnly = true)
 public class PaymentSimulationService {
 
+    private static final int MIN_BACKFILL_COUNT = 10;
+    private static final int MAX_BACKFILL_COUNT = 20;
     private static final int MAX_BULK_COUNT = 1000;
     private static final int MAX_DAYS_BACK = 30;
     private static final int FIRST_PAYMENT_HOUR = 6;
@@ -39,14 +43,14 @@ public class PaymentSimulationService {
     @Transactional
     public PaymentEventPostRequest generateOne() {
         Card card = pickRegisteredCard();
-        PaymentEvent event = createAndSavePaymentEvent(card);
+        PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.SCHEDULED);
         return event.toPostRequest();
     }
 
     @Transactional
     public PaymentEventPostRequest generateOneAndSend() {
         Card card = pickRegisteredCard();
-        PaymentEvent event = createAndSavePaymentEvent(card);
+        PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.SCHEDULED);
         sendToBudgetIfEnabled(event);
         return event.toPostRequest();
     }
@@ -58,7 +62,7 @@ public class PaymentSimulationService {
 
         return ThreadLocalRandom.current()
                 .ints(count, 0, cards.size())
-                .mapToObj(index -> createAndSavePaymentEvent(cards.get(index)).toPostRequest())
+                .mapToObj(index -> createAndSavePaymentEvent(cards.get(index), PaymentEventGenerationType.SCHEDULED).toPostRequest())
                 .toList();
     }
 
@@ -70,7 +74,7 @@ public class PaymentSimulationService {
         return ThreadLocalRandom.current()
                 .ints(count, 0, cards.size())
                 .mapToObj(index -> {
-                    PaymentEvent event = createAndSavePaymentEvent(cards.get(index));
+                    PaymentEvent event = createAndSavePaymentEvent(cards.get(index), PaymentEventGenerationType.SCHEDULED);
                     sendToBudgetIfEnabled(event);
                     return event.toPostRequest();
                 })
@@ -85,7 +89,7 @@ public class PaymentSimulationService {
 
         return ThreadLocalRandom.current()
                 .ints(count, 0, 1)
-                .mapToObj(index -> createAndSavePaymentEvent(card).toPostRequest())
+                .mapToObj(index -> createAndSavePaymentEvent(card, PaymentEventGenerationType.SCHEDULED).toPostRequest())
                 .toList();
     }
 
@@ -98,11 +102,36 @@ public class PaymentSimulationService {
         return ThreadLocalRandom.current()
                 .ints(count, 0, 1)
                 .mapToObj(index -> {
-                    PaymentEvent event = createAndSavePaymentEvent(card);
+                    PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.SCHEDULED);
                     sendToBudgetIfEnabled(event);
                     return event.toPostRequest();
                 })
                 .toList();
+    }
+
+    @Transactional
+    public List<PaymentEventPostRequest> generateHistoricalBackfillByUserIdAndSend(String userId) {
+        validateUserId(userId);
+        Card card = getRegisteredCardByUserId(userId);
+        UserPaymentState state = userPaymentStateRepository.findById(userId)
+                .orElseThrow(() -> new IllegalStateException("User payment state is not available. userId=" + userId));
+
+        if (!state.needsBackfill()) {
+            return List.of();
+        }
+
+        int count = ThreadLocalRandom.current().nextInt(MIN_BACKFILL_COUNT, MAX_BACKFILL_COUNT + 1);
+        List<PaymentEventPostRequest> createdEvents = ThreadLocalRandom.current()
+                .ints(count, 0, 1)
+                .mapToObj(index -> {
+                    PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.BACKFILL);
+                    dispatchToBudgetStrict(event);
+                    return event.toPostRequest();
+                })
+                .toList();
+
+        state.markBackfilled(LocalDateTime.now());
+        return createdEvents;
     }
 
     private Card pickRegisteredCard() {
@@ -123,7 +152,7 @@ public class PaymentSimulationService {
                 .orElseThrow(() -> new IllegalStateException("No registered card is available. userId=" + userId));
     }
 
-    private PaymentEvent createAndSavePaymentEvent(Card card) {
+    private PaymentEvent createAndSavePaymentEvent(Card card, PaymentEventGenerationType generationType) {
         PaymentSimulationData data = dataLoader.getData();
         PaymentSimulationData.MerchantBrand merchant = pickOne(data.merchants());
         PaymentSimulationData.CategoryRule categoryRule = findCategoryRule(data, merchant.category());
@@ -133,7 +162,8 @@ public class PaymentSimulationService {
                 generateMerchantName(merchant, data),
                 merchant.category(),
                 generateAmount(categoryRule),
-                generatePaidAt(categoryRule)
+                generatePaidAt(categoryRule, generationType),
+                generationType
         );
         return paymentEventRepository.save(event);
     }
@@ -153,6 +183,16 @@ public class PaymentSimulationService {
                     e
             );
         }
+    }
+
+    private void dispatchToBudgetStrict(PaymentEvent event) {
+        if (!userPaymentStateRepository.existsByUserIdAndBudgetSyncEnabledTrue(event.getUserId())) {
+            throw new IllegalStateException(
+                    "Budget sync is not enabled for backfill. userId=" + event.getUserId()
+            );
+        }
+
+        paymentEventDeliveryService.dispatch(event);
     }
 
     private PaymentSimulationData.CategoryRule findCategoryRule(
@@ -188,18 +228,48 @@ public class PaymentSimulationService {
         return selectedUnit * roundUnit;
     }
 
-    private LocalDateTime generatePaidAt(PaymentSimulationData.CategoryRule categoryRule) {
+    private LocalDateTime generatePaidAt(
+            PaymentSimulationData.CategoryRule categoryRule,
+            PaymentEventGenerationType generationType
+    ) {
+        return switch (generationType) {
+            case BACKFILL -> generateHistoricalPaidAt(categoryRule);
+            case SCHEDULED -> generateTodayPaidAt(categoryRule);
+        };
+    }
+
+    private LocalDateTime generateHistoricalPaidAt(PaymentSimulationData.CategoryRule categoryRule) {
         ThreadLocalRandom random = ThreadLocalRandom.current();
         PaymentSimulationData.TimeWindow timeWindow = pickWeightedTimeWindow(getAwakeTimeWindows(categoryRule));
 
         int hour = random.nextInt(timeWindow.startHour(), timeWindow.endHour());
         int minute = random.nextInt(0, 60);
         int second = random.nextInt(0, 60);
-        int daysBack = random.nextInt(0, MAX_DAYS_BACK + 1);
+        int daysBack = random.nextInt(1, MAX_DAYS_BACK + 1);
 
         return LocalDate.now()
                 .minusDays(daysBack)
                 .atTime(hour, minute, second);
+    }
+
+    private LocalDateTime generateTodayPaidAt(PaymentSimulationData.CategoryRule categoryRule) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        PaymentSimulationData.TimeWindow timeWindow = pickWeightedTimeWindow(getAwakeTimeWindows(categoryRule));
+
+        int currentHour = LocalDateTime.now().getHour();
+        int startHour = Math.max(timeWindow.startHour(), FIRST_PAYMENT_HOUR);
+        int endHourExclusive = Math.min(timeWindow.endHour(), LAST_PAYMENT_EXCLUSIVE_HOUR);
+        int cappedEndHourExclusive = Math.min(endHourExclusive, Math.max(currentHour + 1, startHour + 1));
+
+        if (startHour >= cappedEndHourExclusive) {
+            return LocalDateTime.now().withNano(0);
+        }
+
+        int hour = random.nextInt(startHour, cappedEndHourExclusive);
+        int minute = random.nextInt(0, 60);
+        int second = random.nextInt(0, 60);
+
+        return LocalDate.now().atTime(hour, minute, second);
     }
 
     private List<PaymentSimulationData.TimeWindow> getAwakeTimeWindows(

@@ -5,6 +5,7 @@ import com.project.backend.card.dto.RegisterCardRequest;
 import com.project.backend.card.entity.Card;
 import com.project.backend.card.repository.CardRepository;
 import com.project.backend.global.error.CardOwnershipMismatchException;
+import com.project.backend.payment.service.PaymentSimulationService;
 import com.project.backend.payment.service.UserPaymentStateService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -20,6 +21,7 @@ public class CardService {
 
     private final CardRepository cardRepository;
     private final UserPaymentStateService userPaymentStateService;
+    private final PaymentSimulationService paymentSimulationService;
 
     @Transactional
     public CardResponse registerCard(RegisterCardRequest request) {
@@ -29,6 +31,7 @@ public class CardService {
                         .map(existingCard -> replaceUserCard(existingCard, request))
                         .orElseGet(() -> createCard(request)));
         userPaymentStateService.activateBudgetSync(request.userId());
+        paymentSimulationService.generateHistoricalBackfillByUserIdAndSend(request.userId());
         return response;
     }
 
@@ -37,6 +40,14 @@ public class CardService {
                 .stream()
                 .map(CardResponse::from)
                 .toList();
+    }
+
+    @Transactional
+    public void deleteCard(String cardId) {
+        cardRepository.findById(cardId).ifPresent(card -> {
+            userPaymentStateService.clearCardPaymentData(card.getUserId());
+            cardRepository.delete(card);
+        });
     }
 
     private CardResponse syncExistingCard(Card card, RegisterCardRequest request) {
@@ -57,6 +68,7 @@ public class CardService {
     }
 
     private CardResponse replaceUserCard(Card existingCard, RegisterCardRequest request) {
+        userPaymentStateService.clearCardPaymentData(existingCard.getUserId());
         cardRepository.delete(existingCard);
         cardRepository.flush();
         return createCard(request);
