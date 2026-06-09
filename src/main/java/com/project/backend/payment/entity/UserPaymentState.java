@@ -36,6 +36,9 @@ public class UserPaymentState {
     @Column(name = "last_flushed_at")
     private LocalDateTime lastFlushedAt;
 
+    @Column(name = "backfilled_at")
+    private LocalDateTime backfilledAt;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -67,5 +70,14 @@ public class UserPaymentState {
     public void markFlushed(LocalDateTime flushedAt) {
         this.lastFlushedAt = flushedAt;
         this.updatedAt = flushedAt;
+    }
+
+    public boolean needsBackfill() {
+        return this.backfilledAt == null;
+    }
+
+    public void markBackfilled(LocalDateTime backfilledAt) {
+        this.backfilledAt = backfilledAt;
+        this.updatedAt = backfilledAt;
     }
 }
