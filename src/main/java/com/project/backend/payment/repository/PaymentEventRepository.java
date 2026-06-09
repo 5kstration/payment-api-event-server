@@ -8,4 +8,8 @@ import java.util.List;
 public interface PaymentEventRepository extends JpaRepository<PaymentEvent, String> {
 
     List<PaymentEvent> findByUserIdAndSentToBudgetFalseOrderByPaidAtAsc(String userId);
+
+    List<PaymentEvent> findByUserId(String userId);
+
+    void deleteByUserId(String userId);
 }

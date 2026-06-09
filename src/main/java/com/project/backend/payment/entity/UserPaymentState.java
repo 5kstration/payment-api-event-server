@@ -80,4 +80,12 @@ public class UserPaymentState {
         this.backfilledAt = backfilledAt;
         this.updatedAt = backfilledAt;
     }
+
+    public void resetCardLinkedState(LocalDateTime updatedAt) {
+        this.budgetSyncEnabled = false;
+        this.deactivatedAt = updatedAt;
+        this.lastFlushedAt = null;
+        this.backfilledAt = null;
+        this.updatedAt = updatedAt;
+    }
 }

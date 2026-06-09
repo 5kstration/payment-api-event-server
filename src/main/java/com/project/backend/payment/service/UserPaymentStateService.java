@@ -3,6 +3,7 @@ package com.project.backend.payment.service;
 import com.project.backend.card.repository.CardRepository;
 import com.project.backend.payment.entity.PaymentEvent;
 import com.project.backend.payment.entity.UserPaymentState;
+import com.project.backend.payment.repository.PaymentEventOutboxRepository;
 import com.project.backend.payment.repository.PaymentEventRepository;
 import com.project.backend.payment.repository.UserPaymentStateRepository;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ public class UserPaymentStateService {
     private final CardRepository cardRepository;
     private final UserPaymentStateRepository userPaymentStateRepository;
     private final PaymentEventRepository paymentEventRepository;
+    private final PaymentEventOutboxRepository paymentEventOutboxRepository;
     private final PaymentEventDeliveryService paymentEventDeliveryService;
 
     @Transactional
@@ -51,6 +53,25 @@ public class UserPaymentStateService {
         UserPaymentState state = userPaymentStateRepository.findById(userId)
                 .orElseGet(() -> UserPaymentState.create(userId));
         state.deactivate(now);
+        userPaymentStateRepository.save(state);
+    }
+
+    @Transactional
+    public void clearCardPaymentData(String userId) {
+        LocalDateTime now = LocalDateTime.now();
+        UserPaymentState state = userPaymentStateRepository.findById(userId)
+                .orElseGet(() -> UserPaymentState.create(userId));
+        List<PaymentEvent> paymentEvents = paymentEventRepository.findByUserId(userId);
+        List<String> paymentEventIds = paymentEvents.stream()
+                .map(PaymentEvent::getPaymentEventId)
+                .toList();
+
+        if (!paymentEventIds.isEmpty()) {
+            paymentEventOutboxRepository.deleteByPaymentEventIdIn(paymentEventIds);
+        }
+        paymentEventRepository.deleteByUserId(userId);
+
+        state.resetCardLinkedState(now);
         userPaymentStateRepository.save(state);
     }
 

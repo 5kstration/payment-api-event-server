@@ -45,7 +45,7 @@ public class CardService {
     @Transactional
     public void deleteCard(String cardId) {
         cardRepository.findById(cardId).ifPresent(card -> {
-            userPaymentStateService.deactivateBudgetSync(card.getUserId());
+            userPaymentStateService.clearCardPaymentData(card.getUserId());
             cardRepository.delete(card);
         });
     }
@@ -68,6 +68,7 @@ public class CardService {
     }
 
     private CardResponse replaceUserCard(Card existingCard, RegisterCardRequest request) {
+        userPaymentStateService.clearCardPaymentData(existingCard.getUserId());
         cardRepository.delete(existingCard);
         cardRepository.flush();
         return createCard(request);
