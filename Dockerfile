@@ -1,7 +1,7 @@
 # =========================================================================
 # Stage 1: Build Stage
 # =========================================================================
-FROM gradle:8.12-jdk17-alpine AS builder
+FROM public.ecr.aws/docker/library/gradle:8.12-jdk17-alpine AS builder
 
 WORKDIR /build
 
@@ -16,7 +16,7 @@ RUN ./gradlew bootJar -x test --no-daemon
 # =========================================================================
 # Stage 2: Runtime Stage
 # =========================================================================
-FROM eclipse-temurin:17-jre-alpine AS runner
+FROM public.ecr.aws/docker/library/eclipse-temurin:17-jre-alpine AS runner
 
 WORKDIR /app
 
