@@ -5,7 +5,6 @@ import com.project.backend.card.repository.CardRepository;
 import com.project.backend.payment.dto.PaymentEventPostRequest;
 import com.project.backend.payment.entity.PaymentEvent;
 import com.project.backend.payment.entity.PaymentEventGenerationType;
-import com.project.backend.payment.entity.UserPaymentState;
 import com.project.backend.payment.generator.PaymentSimulationData;
 import com.project.backend.payment.generator.PaymentSimulationDataLoader;
 import com.project.backend.payment.repository.PaymentEventRepository;
@@ -113,7 +112,7 @@ public class PaymentSimulationService {
     public List<PaymentEventPostRequest> generateHistoricalBackfillByUserIdAndSend(String userId) {
         validateUserId(userId);
         Card card = getRegisteredCardByUserId(userId);
-        UserPaymentState state = userPaymentStateRepository.findById(userId)
+        var state = userPaymentStateRepository.findById(userId)
                 .orElseThrow(() -> new IllegalStateException("User payment state is not available. userId=" + userId));
 
         if (!state.needsBackfill()) {
@@ -169,10 +168,6 @@ public class PaymentSimulationService {
     }
 
     private void sendToBudgetIfEnabled(PaymentEvent event) {
-        if (!userPaymentStateRepository.existsByUserIdAndBudgetSyncEnabledTrue(event.getUserId())) {
-            return;
-        }
-
         try {
             paymentEventDeliveryService.dispatch(event);
         } catch (RuntimeException e) {
@@ -186,12 +181,6 @@ public class PaymentSimulationService {
     }
 
     private void dispatchToBudgetStrict(PaymentEvent event) {
-        if (!userPaymentStateRepository.existsByUserIdAndBudgetSyncEnabledTrue(event.getUserId())) {
-            throw new IllegalStateException(
-                    "Budget sync is not enabled for backfill. userId=" + event.getUserId()
-            );
-        }
-
         paymentEventDeliveryService.dispatch(event);
     }
 
