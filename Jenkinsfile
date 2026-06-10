@@ -125,6 +125,8 @@ pipeline {
                 docker rmi "${IMAGE_FULL_NAME}" || true
                 docker rmi "${IMAGE_LATEST}" || true
             '''
+            sh "docker builder prune -af || true"
+            sh "docker system prune -af --volumes || true"
         }
         success {
             echo '[Success] Payment API Event Server Kubernetes deployment completed'
