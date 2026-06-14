@@ -93,10 +93,12 @@ pipeline {
                         kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/deployment.yaml
                         kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/service.yaml
                         kubectl --kubeconfig=${KUBECONFIG} apply -f k8s/istio.yaml
-                        kubectl --kubeconfig=${KUBECONFIG} set image deployment/${K8S_DEPLOYMENT} \
+                        kubectl --kubeconfig=${KUBECONFIG} set image rollout/${K8S_DEPLOYMENT} \
                           ${K8S_DEPLOYMENT}=${IMAGE_FULL_NAME} \
                           -n ${K8S_NAMESPACE}
-                        kubectl --kubeconfig=${KUBECONFIG} rollout status deployment/${K8S_DEPLOYMENT} \
+curl -sLO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+                        chmod +x ./kubectl-argo-rollouts-linux-amd64
+                        ./kubectl-argo-rollouts-linux-amd64 --kubeconfig=${KUBECONFIG} -n $K8S_NAMESPACE status ${K8S_DEPLOYMENT} --timeout=180s
                           -n ${K8S_NAMESPACE} \
                           --timeout=180s
                     '''
@@ -110,7 +112,7 @@ pipeline {
                 withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
                     sh '''
                         set -e
-                        kubectl --kubeconfig=${KUBECONFIG} get deployment ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
+                        kubectl --kubeconfig=${KUBECONFIG} get rollout ${K8S_DEPLOYMENT} -n ${K8S_NAMESPACE}
                         kubectl --kubeconfig=${KUBECONFIG} get pods -n ${K8S_NAMESPACE} -l app=${K8S_DEPLOYMENT}
                     '''
                 }
@@ -130,9 +132,19 @@ pipeline {
         }
         success {
             echo '[Success] Payment API Event Server Kubernetes deployment completed'
+            sh """
+            curl -H "Content-Type: application/json" \\
+                 -d '{"content": "✅ **배포 성공**: ${env.JOB_NAME} [빌드 #${env.BUILD_NUMBER}] 배포가 카나리(Canary) 방식으로 안전하게 완료되었습니다! 🚀"}' \\
+                 "https://discord.com/api/webhooks/1515752436105740448/FPDZ1HcYV4qUBBYZ0IfcgjRdK4FDAhFIhkthC-Vekt_3L9Kjke0I6jsiJMZQjfXnHAZQ"
+            """
         }
         failure {
             echo '[Failure] Payment API Event Server pipeline failed. Fetching pod logs for debugging...'
+            sh """
+            curl -H "Content-Type: application/json" \\
+                 -d '{"content": "🚨 **배포 실패**: ${env.JOB_NAME} [빌드 #${env.BUILD_NUMBER}] 에러 발생! 파이프라인 로그를 확인해주세요."}' \\
+                 "https://discord.com/api/webhooks/1515752436105740448/FPDZ1HcYV4qUBBYZ0IfcgjRdK4FDAhFIhkthC-Vekt_3L9Kjke0I6jsiJMZQjfXnHAZQ"
+            """
             withCredentials([file(credentialsId: "${KUBECONFIG_ID}", variable: 'KUBECONFIG')]) {
                 sh '''
                     echo "=== Pod Status ==="
