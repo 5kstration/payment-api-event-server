@@ -1,93 +1,192 @@
-# payment-api-event-server
+# Payment API Event Server
 
+Spring Boot 기반 결제 이벤트 시뮬레이션 마이크로서비스입니다. 현재 PostgreSQL, NATS JetStream, Spring Scheduler를 사용하여 카드 등록 상태를 기준으로 결제 이벤트를 생성하고, 예산/가계부 서비스로 결제 이벤트를 전달합니다.
 
+## 기술 스택
 
-## Getting started
+- Java 17
+- Spring Boot 3.5.14
+- Spring Data JPA
+- PostgreSQL
+- NATS JetStream
+- Spring Scheduler
+- Spring Web `RestClient`
+- Springdoc OpenAPI / Swagger UI
+- Micrometer / Prometheus
+- JUnit 5
+- SonarQube
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## 현재 구현 상태
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+### 카드 관리 (Card)
 
-## Add your files
+- 온보딩/내부 서비스에서 전달받은 카드 정보를 등록합니다.
+- 사용자별 활성 카드 정보를 관리합니다.
+- 동일 사용자에게 새 카드가 등록되면 기존 카드 및 결제 연동 상태를 정리한 뒤 새 카드로 교체합니다.
+- 카드 삭제 시 사용자 결제 동기화 상태와 결제 관련 데이터를 초기화합니다.
+- `cardLast4`는 4자리 숫자 형식으로 검증합니다.
 
-* [Create](https://docs.gitlab.com/user/project/repository/web_editor/#create-a-file) or [upload](https://docs.gitlab.com/user/project/repository/web_editor/#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+### 결제 이벤트 시뮬레이션 (Payment Event)
 
+- 등록된 카드 정보를 기반으로 결제 이벤트를 생성합니다.
+- 시뮬레이션 데이터 파일의 가맹점, 카테고리, 금액 범위, 시간대 가중치를 사용하여 결제 데이터를 생성합니다.
+- 단건/벌크 결제 이벤트 생성을 지원합니다.
+- 특정 사용자 기준의 벌크 결제 이벤트 생성을 지원합니다.
+- 새 카드 등록 시 과거 결제 내역 백필 이벤트를 생성하여 예산 서비스로 전달합니다.
+- 매일 00:00-06:00 사이에는 스케줄러 기반 자동 생성이 중단됩니다.
+
+### 예산 서비스 연동
+
+- 사용자별 예산 동기화 활성화/비활성화 상태를 관리합니다.
+- 예산 동기화가 활성화된 사용자에 대해서만 결제 이벤트를 예산 서비스로 전달합니다.
+- NATS JetStream이 비활성화된 경우 `connector-service.payment-event-url`로 HTTP POST 요청을 보냅니다.
+- NATS JetStream이 활성화된 경우 Outbox 테이블에 이벤트를 저장하고, 별도 스케줄러가 JetStream subject로 발행합니다.
+
+### Outbox 기반 이벤트 발행
+
+- 결제 이벤트 발행 요청을 `payment_event_outbox` 테이블에 먼저 저장합니다.
+- `PENDING` 상태 이벤트를 주기적으로 조회하여 NATS JetStream으로 발행합니다.
+- 발행 성공 시 Outbox 상태를 `PUBLISHED`로 변경하고 결제 이벤트의 전송 상태를 갱신합니다.
+- 발행 실패 시 재시도 횟수와 마지막 에러 메시지를 저장합니다.
+
+## 주요 API
+
+| Method | Endpoint | 설명 |
+|---|---|---|
+| POST | `/internal/v1/cards` | 카드 등록/동기화 |
+| GET | `/internal/v1/cards` | 등록된 카드 목록 조회 |
+| DELETE | `/internal/v1/cards/{cardId}` | 카드 삭제 및 사용자 결제 상태 초기화 |
+| POST | `/internal/v1/users/{userId}/budget-sync/activate` | 사용자 예산 동기화 활성화 |
+| POST | `/internal/v1/users/{userId}/budget-sync/deactivate` | 사용자 예산 동기화 비활성화 |
+| POST | `/api/v1/payment-simulations/generate` | 결제 이벤트 단건 생성 |
+| POST | `/api/v1/payment-simulations/send` | 결제 이벤트 단건 생성 후 전송 |
+| POST | `/api/v1/payment-simulations/generate/bulk?count=10` | 결제 이벤트 벌크 생성 |
+| POST | `/api/v1/payment-simulations/send/bulk?count=10` | 결제 이벤트 벌크 생성 후 전송 |
+| POST | `/api/v1/payment-simulations/users/{userId}/send/bulk?count=10` | 특정 사용자 결제 이벤트 벌크 생성 후 전송 |
+
+## 로컬 실행
+
+### 필수 인프라
+
+- PostgreSQL
+- NATS Server (JetStream 사용 시)
+- 예산/가계부 서비스 또는 결제 이벤트 수신용 테스트 서버
+
+`src/main/resources/application.yml`에는 실제 운영 비밀값을 넣지 않습니다. 로컬/운영 실행 시 환경변수, Secret/ConfigMap 또는 Config Server를 통해 주입합니다.
+
+```powershell
+$env:SPRING_DATASOURCE_URL="jdbc:postgresql://localhost:5432/payment_event_db"
+$env:SPRING_DATASOURCE_USERNAME="postgres"
+$env:SPRING_DATASOURCE_PASSWORD="postgres"
+$env:SPRING_JPA_HIBERNATE_DDL_AUTO="update"
+
+$env:SIMULATION_FIXED_DELAY_MS="60000"
+$env:SIMULATION_DATA_FILE="classpath:simulation/payment-simulation-data.json"
+
+$env:CONNECTOR_SERVICE_PAYMENT_EVENT_URL="http://localhost:18080/internal/v1/payment-events"
+
+$env:PAYMENT_EVENT_MESSAGING_NATS_ENABLED="false"
+$env:PAYMENT_EVENT_MESSAGING_NATS_URL="nats://localhost:4222"
+$env:PAYMENT_EVENT_MESSAGING_NATS_STREAM="PAYMENT_EVENTS"
+$env:PAYMENT_EVENT_MESSAGING_NATS_SUBJECT="payment.events.created"
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/5kstration/payment-api-event-server.git
-git branch -M main
-git push -uf origin main
+
+실행:
+
+```powershell
+.\gradlew.bat bootRun
 ```
 
-## Integrate with your tools
+## DB 적재 방식
 
-* [Set up project integrations](https://gitlab.com/5kstration/payment-api-event-server/-/settings/integrations)
+### cards
 
-## Collaborate with your team
+카드 등록 API를 통해 저장되는 사용자 카드 정보입니다. 현재 사용자당 하나의 카드만 활성 카드로 관리합니다.
 
-* [Invite team members and collaborators](https://docs.gitlab.com/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/user/project/merge_requests/creating_merge_requests/)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/user/project/issues/managing_issues/#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```text
+card_id       = 카드 ID
+user_id       = 사용자 ID
+card_name     = 카드명
+card_company  = 카드사
+card_last4    = 카드 번호 마지막 4자리
+active        = 활성 여부
+registered_at = 등록 일시
+```
 
-## Test and Deploy
+### user_payment_states
 
-Use the built-in continuous integration in GitLab.
+사용자별 예산 동기화 상태를 저장합니다.
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/topics/autodevops/requirements/)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ci/environments/protected_environments/)
+```text
+user_id              = 사용자 ID
+budget_sync_enabled  = 예산 동기화 활성화 여부
+activated_at         = 동기화 활성화 일시
+deactivated_at       = 동기화 비활성화 일시
+last_flushed_at      = 마지막 결제 이벤트 flush 일시
+backfilled_at        = 과거 결제 내역 백필 완료 일시
+created_at           = 생성 일시
+updated_at           = 수정 일시
+```
 
-***
+### payment_events
 
-# Editing this README
+시뮬레이션으로 생성된 결제 이벤트가 저장됩니다.
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+```text
+payment_event_id          = 내부 결제 이벤트 ID
+external_payment_event_id = 외부 전달용 결제 이벤트 ID
+user_id                   = 결제 사용자 ID
+card_id                   = 카드 ID
+card_name                 = 카드명
+card_company              = 카드사
+card_last4                = 카드 번호 마지막 4자리
+merchant_name             = 가맹점명
+category                  = 결제 카테고리
+amount                    = 결제 금액
+paid_at                   = 결제 일시
+generation_type           = 생성 타입 (SCHEDULED, BACKFILL)
+sent_to_budget            = 예산 서비스 전송 여부
+sent_to_budget_at         = 예산 서비스 전송 일시
+created_at                = 생성 일시
+```
 
-## Suggestions for a good README
+### payment_event_outbox
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+NATS JetStream 발행을 위한 Outbox 이벤트가 저장됩니다.
 
-## Name
-Choose a self-explaining name for your project.
+```text
+outbox_id                 = Outbox ID
+payment_event_id          = 내부 결제 이벤트 ID
+external_payment_event_id = 외부 전달용 결제 이벤트 ID
+subject                   = NATS subject
+payload                   = 발행 payload
+status                    = 발행 상태 (PENDING, PUBLISHED)
+publish_attempts          = 발행 시도 횟수
+last_error                = 마지막 발행 실패 메시지
+created_at                = 생성 일시
+updated_at                = 수정 일시
+published_at              = 발행 완료 일시
+```
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+## Swagger
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+서버 실행 후 아래 경로에서 API 명세를 확인할 수 있습니다.
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+```text
+http://<payment-api-event-server-host>/swagger-ui.html
+```
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+## Actuator / Prometheus
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+Spring Boot Actuator와 Prometheus registry가 포함되어 있습니다. 운영 환경에서는 필요한 actuator endpoint만 노출하도록 설정합니다.
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+```text
+http://<payment-api-event-server-host>/actuator
+http://<payment-api-event-server-host>/actuator/prometheus
+```
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+## 테스트
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+```powershell
+.\gradlew.bat test
+```
