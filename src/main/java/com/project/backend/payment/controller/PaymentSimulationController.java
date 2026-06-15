@@ -28,6 +28,11 @@ public class PaymentSimulationController {
         return paymentSimulationService.generateOneAndSend();
     }
 
+    @PostMapping("/send/all")
+    public List<PaymentEventPostRequest> generateForEachRegisteredCardAndSend() {
+        return paymentSimulationService.generateForEachRegisteredCardAndSend();
+    }
+
     @PostMapping("/generate/bulk")
     public List<PaymentEventPostRequest> generateBulk(
             @RequestParam(defaultValue = "10") int count

@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -52,6 +53,17 @@ public class PaymentSimulationService {
         PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.SCHEDULED);
         sendToBudgetIfEnabled(event);
         return event.toPostRequest();
+    }
+
+    @Transactional
+    public List<PaymentEventPostRequest> generateForEachRegisteredCardAndSend() {
+        return getRegisteredCards().stream()
+                .map(card -> {
+                    PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.SCHEDULED);
+                    sendToBudgetIfEnabled(event);
+                    return event.toPostRequest();
+                })
+                .toList();
     }
 
     @Transactional
@@ -120,10 +132,14 @@ public class PaymentSimulationService {
         }
 
         int count = ThreadLocalRandom.current().nextInt(MIN_BACKFILL_COUNT, MAX_BACKFILL_COUNT + 1);
-        List<PaymentEventPostRequest> createdEvents = ThreadLocalRandom.current()
-                .ints(count, 0, 1)
-                .mapToObj(index -> {
-                    PaymentEvent event = createAndSavePaymentEvent(card, PaymentEventGenerationType.BACKFILL);
+        List<LocalDateTime> paidAts = generateDistributedHistoricalPaidAts(card, count);
+        List<PaymentEventPostRequest> createdEvents = paidAts.stream()
+                .map(paidAt -> {
+                    PaymentEvent event = createAndSavePaymentEvent(
+                            card,
+                            PaymentEventGenerationType.BACKFILL,
+                            paidAt
+                    );
                     dispatchToBudgetStrict(event);
                     return event.toPostRequest();
                 })
@@ -156,12 +172,42 @@ public class PaymentSimulationService {
         PaymentSimulationData.MerchantBrand merchant = pickOne(data.merchants());
         PaymentSimulationData.CategoryRule categoryRule = findCategoryRule(data, merchant.category());
 
+        return createAndSavePaymentEvent(
+                card,
+                generationType,
+                data,
+                merchant,
+                categoryRule,
+                generatePaidAt(categoryRule, generationType)
+        );
+    }
+
+    private PaymentEvent createAndSavePaymentEvent(
+            Card card,
+            PaymentEventGenerationType generationType,
+            LocalDateTime paidAt
+    ) {
+        PaymentSimulationData data = dataLoader.getData();
+        PaymentSimulationData.MerchantBrand merchant = pickOne(data.merchants());
+        PaymentSimulationData.CategoryRule categoryRule = findCategoryRule(data, merchant.category());
+
+        return createAndSavePaymentEvent(card, generationType, data, merchant, categoryRule, paidAt);
+    }
+
+    private PaymentEvent createAndSavePaymentEvent(
+            Card card,
+            PaymentEventGenerationType generationType,
+            PaymentSimulationData data,
+            PaymentSimulationData.MerchantBrand merchant,
+            PaymentSimulationData.CategoryRule categoryRule,
+            LocalDateTime paidAt
+    ) {
         PaymentEvent event = PaymentEvent.create(
                 card,
                 generateMerchantName(merchant, data),
                 merchant.category(),
                 generateAmount(categoryRule),
-                generatePaidAt(categoryRule, generationType),
+                paidAt,
                 generationType
         );
         return paymentEventRepository.save(event);
@@ -239,6 +285,52 @@ public class PaymentSimulationService {
         return LocalDate.now()
                 .minusDays(daysBack)
                 .atTime(hour, minute, second);
+    }
+
+    private List<LocalDateTime> generateDistributedHistoricalPaidAts(Card card, int count) {
+        List<Integer> dayOffsets = createSpreadDayOffsets(count);
+        Collections.shuffle(dayOffsets);
+
+        LocalDate referenceDate = getBackfillReferenceDate(card);
+        return dayOffsets.stream()
+                .map(daysBack -> referenceDate.minusDays(daysBack))
+                .map(this::generateRandomAwakeTimeAt)
+                .toList();
+    }
+
+    private List<Integer> createSpreadDayOffsets(int count) {
+        List<Integer> dayOffsets = new ArrayList<>();
+
+        if (count == 1) {
+            dayOffsets.add(1);
+            return dayOffsets;
+        }
+
+        for (int index = 0; index < count; index++) {
+            int daysBack = 1 + (index * (MAX_DAYS_BACK - 1)) / (count - 1);
+            dayOffsets.add(daysBack);
+        }
+
+        return dayOffsets;
+    }
+
+    private LocalDate getBackfillReferenceDate(Card card) {
+        LocalDate today = LocalDate.now();
+        if (card.getRegisteredAt() == null) {
+            return today;
+        }
+
+        LocalDate registeredDate = card.getRegisteredAt().toLocalDate();
+        return registeredDate.isAfter(today) ? today : registeredDate;
+    }
+
+    private LocalDateTime generateRandomAwakeTimeAt(LocalDate date) {
+        ThreadLocalRandom random = ThreadLocalRandom.current();
+        int hour = random.nextInt(FIRST_PAYMENT_HOUR, LAST_PAYMENT_EXCLUSIVE_HOUR);
+        int minute = random.nextInt(0, 60);
+        int second = random.nextInt(0, 60);
+
+        return date.atTime(hour, minute, second);
     }
 
     private LocalDateTime generateTodayPaidAt(PaymentSimulationData.CategoryRule categoryRule) {
