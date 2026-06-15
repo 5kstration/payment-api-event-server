@@ -26,14 +26,11 @@ public class PaymentSimulationScheduler {
         }
 
         try {
-            var request = paymentSimulationService.generateOneAndSend();
+            var requests = paymentSimulationService.generateForEachRegisteredCardAndSend();
 
             log.info(
-                    "Payment event generated. It is sent to budget only when budget sync is enabled. externalPaymentEventId={}, userId={}, cardId={}, amount={}",
-                    request.externalPaymentEventId(),
-                    request.userId(),
-                    request.cardId(),
-                    request.amount()
+                    "Payment events generated for all registered cards. count={}",
+                    requests.size()
             );
         } catch (IllegalStateException e) {
             log.warn("Payment event generation skipped. reason={}", e.getMessage());

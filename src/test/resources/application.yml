@@ -13,7 +13,7 @@ spring:
         dialect: org.hibernate.dialect.H2Dialect
 
 simulation:
-  fixed-delay-ms: 60000
+  fixed-delay-ms: 1800000
   data-file: classpath:simulation/payment-simulation-data.json
 
 connector-service:
